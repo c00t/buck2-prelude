@@ -27,6 +27,8 @@ def is_relative_buck_out_path(argument):
 def is_library_path(argument):
     return argument.endswith(".lib")
 
+def is_rust_library_path(argument):
+    return argument.endswith(".rlib")
 
 def is_whole_archive_option(argument):
     return argument.startswith("/WHOLEARCHIVE")
@@ -70,6 +72,16 @@ def main():
         # Save library paths to support expanding them afterwards
         if is_library_path(argument):
             library_name = os.path.basename(argument)
+            full_library_paths[library_name] = argument
+
+        # Save rust library paths to support expanding them afterwards
+        if is_rust_library_path(argument):
+            library_name = os.path.basename(argument)
+            # rust rlib format is "lib<package-name>-<hash>.rlib"
+            # We need to strip the lib prefix and the hash suffix
+            library_name = library_name[3:library_name.rfind("-")]
+            # replace \\ with \ to match the path separator
+            # argument = argument.replace("\\\\", "\\")
             full_library_paths[library_name] = argument
 
         # LLVM linker expects full path in /WHOLEARCHIVE option while MSVC
