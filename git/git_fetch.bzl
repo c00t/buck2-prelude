@@ -15,6 +15,14 @@ def _is_40_hex(rev: str) -> bool:
             return False
     return True
 
+def _project_output(out: Artifact, path: str) -> Artifact:
+    if path == ".":
+        return out
+    elif path.endswith("/"):
+        return out.project(path[:-1], hide_prefix = True)
+    else:
+        return out.project(path, hide_prefix = True)
+
 def git_fetch_impl(ctx: AnalysisContext) -> list[Provider]:
     rev = ctx.attrs.rev
     if not _is_40_hex(rev):
@@ -26,6 +34,9 @@ def git_fetch_impl(ctx: AnalysisContext) -> list[Provider]:
     if not short_path:
         short_path = "work-tree"
     work_tree = ctx.actions.declare_output(short_path, dir = True)
+
+    # declare sub targets from attrs
+    sub_targets = {name: [DefaultInfo(default_outputs = [_project_output(work_tree,name)])] for name in ctx.attrs.sub_targets}
 
     cmd = [
         ctx.attrs._git_fetch_tool[RunInfo],
@@ -42,4 +53,7 @@ def git_fetch_impl(ctx: AnalysisContext) -> list[Provider]:
         no_outputs_cleanup = True,
     )
 
-    return [DefaultInfo(default_output = work_tree)]
+    return [DefaultInfo(
+        default_output = work_tree,
+        sub_targets = sub_targets,
+    )]
