@@ -6,7 +6,11 @@
 # of this source tree.
 
 load("@prelude//cxx:cxx_context.bzl", "get_cxx_toolchain_info")
-load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
+load(
+    "@prelude//cxx:cxx_toolchain_types.bzl",
+    "CxxToolchainInfo",
+    "LinkerType",
+)
 
 def _strip_debug_info(ctx: AnalysisContext, out: str, obj: Artifact) -> Artifact:
     """
@@ -15,7 +19,7 @@ def _strip_debug_info(ctx: AnalysisContext, out: str, obj: Artifact) -> Artifact
     cxx_toolchain = get_cxx_toolchain_info(ctx)
     strip = cxx_toolchain.binary_utilities_info.strip
     output = ctx.actions.declare_output("__stripped__", out)
-    if cxx_toolchain.linker_info.type == "gnu":
+    if cxx_toolchain.linker_info.type == LinkerType("gnu"):
         cmd = cmd_args([strip, "--strip-debug", "--strip-unneeded", "-o", output.as_output(), obj])
     else:
         cmd = cmd_args([strip, "-S", "-o", output.as_output(), obj])
@@ -109,7 +113,7 @@ def strip_debug_with_gnu_debuglink(ctx: AnalysisContext, name: str, obj: Artifac
     ctx.actions.run(cmd, category = "extract_debuginfo", identifier = name)
 
     binary_output = ctx.actions.declare_output("__stripped_objects__", name)
-    cmd = cmd_args([objcopy, "--strip-debug", "--add-gnu-debuglink", debuginfo_output, obj, binary_output.as_output()])
+    cmd = cmd_args([objcopy, "--strip-debug", "--keep-file-symbols", "--add-gnu-debuglink", debuginfo_output, obj, binary_output.as_output()])
     ctx.actions.run(cmd, category = "strip_debug", identifier = name)
 
     return binary_output, debuginfo_output

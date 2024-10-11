@@ -5,8 +5,30 @@
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
 # of this source tree.
 
+load(
+    "@prelude//linking:link_info.bzl",
+    "LibOutputStyle",
+)
 load("@prelude//linking:types.bzl", "Linkage")
 load(":groups_types.bzl", "Group", "Traversal")
+
+# These are targets or link groups that will be added to .linker.argsfile
+# Targets will be expanded to .o files, link groups will be added to NEEDS
+LinkGroupsDebugLinkableEntry = record(
+    name = field(Label | str),
+    output_style = field(LibOutputStyle),
+)
+
+# This is info about single output unit. It is either a final binary or
+# one of link groups.
+LinkGroupsDebugLinkableItem = record(
+    ordered_linkables = field(list[LinkGroupsDebugLinkableEntry]),
+)
+
+LinkGroupsDebugLinkInfo = record(
+    binary = field(LinkGroupsDebugLinkableItem),
+    libs = field(dict[str, LinkGroupsDebugLinkableItem]),
+)
 
 LinkGroupInfo = provider(
     fields = {
@@ -33,7 +55,7 @@ def link_group_inlined_map_attr(root_attr):
                 # a single mapping
                 attrs.tuple(
                     # root node
-                    root_attr,
+                    attrs.one_of(root_attr, attrs.list(root_attr)),
                     # traversal
                     attrs.enum(Traversal.values()),
                     # filters, either `None`, a single filter, or a list of filters

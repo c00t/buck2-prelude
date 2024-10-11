@@ -5,6 +5,7 @@
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
 # of this source tree.
 
+load("@prelude//:paths.bzl", "paths")
 load("@prelude//cxx:cxx_context.bzl", "get_cxx_toolchain_info")
 load("@prelude//cxx:cxx_toolchain_types.bzl", "PicBehavior")
 load(
@@ -34,10 +35,11 @@ load(
 )
 load("@prelude//python:manifest.bzl", "create_manifest_for_entries")
 load("@prelude//python:python.bzl", "PythonLibraryInfo")
+load("@prelude//python:toolchain.bzl", "PythonToolchainInfo")
 load("@prelude//utils:expect.bzl", "expect")
 load(
     "@prelude//utils:graph_utils.bzl",
-    "breadth_first_traversal_by",
+    "depth_first_traversal_by",
 )
 load("@prelude//decls/toolchains_common.bzl", "toolchains_common")
 load("@prelude//transitions/constraint_overrides.bzl", "constraint_overrides_transition")
@@ -56,12 +58,15 @@ def _link_deps(
     def find_deps(node: Label):
         return get_deps_for_link(link_infos[node], link_strategy, pic_behavior)
 
-    return breadth_first_traversal_by(link_infos, deps, find_deps)
+    return depth_first_traversal_by(link_infos, deps, find_deps)
 
 def _impl(ctx: AnalysisContext) -> list[Provider]:
     providers = []
 
-    cmd = cmd_args(ctx.attrs._wheel[RunInfo])
+    cmd = []
+    hidden = []
+
+    cmd.append(ctx.attrs._wheel[RunInfo])
 
     name_parts = [
         ctx.attrs.dist or ctx.attrs.name,
@@ -71,26 +76,44 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
         ctx.attrs.platform,
     ]
     wheel = ctx.actions.declare_output("{}.whl".format("-".join(name_parts)))
-    cmd.add(cmd_args(wheel.as_output(), format = "--output={}"))
+    cmd.append(cmd_args(wheel.as_output(), format = "--output={}"))
 
-    cmd.add("--name={}".format(ctx.attrs.dist or ctx.attrs.name))
-    cmd.add("--version={}".format(ctx.attrs.version))
+    cmd.append("--name={}".format(ctx.attrs.dist or ctx.attrs.name))
+    cmd.append("--version={}".format(ctx.attrs.version))
 
     if ctx.attrs.entry_points:
-        cmd.add("--entry-points={}".format(json.encode(ctx.attrs.entry_points)))
+        cmd.append("--entry-points={}".format(json.encode(ctx.attrs.entry_points)))
 
     for key, val in ctx.attrs.extra_metadata.items():
-        cmd.add("--metadata={}:{}".format(key, val))
+        cmd.extend(["--metadata", key, val])
+
+    cmd.extend(["--metadata", "Requires-Python", "=={}.*".format(ctx.attrs.python[2:])])
+
+    for requires in ctx.attrs.requires:
+        cmd.extend(["--metadata", "Requires-Dist", requires])
+
+    for name, script in ctx.attrs.scripts.items():
+        cmd.extend(["--data", paths.join("scripts", name), script])
+
+    libraries = {}
+    for lib in ctx.attrs.libraries:
+        libraries[lib.label] = lib
+    if ctx.attrs.libraries_query != None:
+        for lib in ctx.attrs.libraries_query:
+            if PythonLibraryInfo in lib:
+                libraries[lib.label] = lib
 
     srcs = []
     extensions = {}
-    for dep in ctx.attrs.libraries:
+    for dep in libraries.values():
         manifests = dep[PythonLibraryInfo].manifests.value
         if manifests.srcs != None:
             srcs.append(manifests.srcs)
         if manifests.resources != None:
-            srcs.append(manifests.resources)
+            expect(not manifests.resources[1])
+            srcs.append(manifests.resources[0])
         if manifests.extensions != None:
+            python_toolchain = ctx.attrs._python_toolchain[PythonToolchainInfo]
             toolchain_info = get_cxx_toolchain_info(ctx)
             items = manifests.extensions.items()
             expect(len(items) == 1)
@@ -104,13 +127,13 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
                 prefer_stripped = ctx.attrs.prefer_stripped_objects,
             ))
             link_infos = get_linkable_graph_node_map_func(dep[LinkableGraph])()
-            for dep in _link_deps(
+            for ext_dep in _link_deps(
                 link_infos,
                 root.deps,
                 LinkStrategy("static_pic"),
                 toolchain_info.pic_behavior,
             ):
-                node = link_infos[dep]
+                node = link_infos[ext_dep]
                 output_style = get_lib_output_style(
                     LinkStrategy("static_pic"),
                     node.preferred_linkage,
@@ -127,7 +150,11 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
                 ctx = ctx,
                 output = extension,
                 opts = link_options(
-                    links = [LinkArgs(infos = inputs)],
+                    links = [
+                        LinkArgs(flags = python_toolchain.extension_linker_flags),
+                        LinkArgs(flags = python_toolchain.wheel_linker_flags),
+                        LinkArgs(infos = inputs),
+                    ],
                     category_suffix = "native_extension",
                     identifier = extension,
                     link_execution_preference = LinkExecutionPreference("any"),
@@ -148,11 +175,11 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
         )
 
     for manifest in srcs:
-        cmd.add(cmd_args(manifest.manifest, format = "--srcs={}"))
+        cmd.append(cmd_args(manifest.manifest, format = "--srcs={}"))
         for a, _ in manifest.artifacts:
-            cmd.hidden(a)
+            hidden.append(a)
 
-    ctx.actions.run(cmd, category = "wheel")
+    ctx.actions.run(cmd_args(cmd, hidden = hidden), category = "wheel")
     providers.append(DefaultInfo(default_output = wheel))
 
     return providers
@@ -180,6 +207,7 @@ python_wheel = rule(
             ),
             default = {},
         ),
+        requires = attrs.list(attrs.string(), default = []),
         extra_metadata = attrs.dict(
             key = attrs.string(),
             value = attrs.string(),
@@ -195,8 +223,11 @@ python_wheel = rule(
         ),
         constraint_overrides = attrs.list(attrs.string(), default = []),
         libraries = attrs.list(attrs.dep(providers = [PythonLibraryInfo]), default = []),
+        scripts = attrs.dict(key = attrs.string(), value = attrs.source(), default = {}),
+        libraries_query = attrs.option(attrs.query(), default = None),
         prefer_stripped_objects = attrs.default_only(attrs.bool(default = False)),
         _wheel = attrs.default_only(attrs.exec_dep(default = "prelude//python/tools:wheel")),
         _cxx_toolchain = toolchains_common.cxx(),
+        _python_toolchain = toolchains_common.python(),
     ),
 )

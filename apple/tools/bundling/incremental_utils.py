@@ -30,6 +30,12 @@ def should_assemble_incrementally(
             "Decided not to assemble incrementally — no incremental state for previous build."
         )
         return False
+    if previous_run_state.versioned_if_macos != incremental_context.versioned_if_macos:
+        logging.getLogger(__name__).info(
+            "Decided not to assemble incrementally — current build and previous build have different versioned_if_macos settings."
+        )
+        return False
+
     previously_codesigned = previous_run_state.codesigned
     # If previously bundle was not code signed there should be no problems with code signing
     # currently in incremental mode. Existing binaries could be code signed "on
@@ -52,6 +58,12 @@ def should_assemble_incrementally(
             "Decided not to assemble incrementally — previous vs current builds have mismatching codesigning identities."
         )
         return False
+    # If previous codesign arguments are different from the current ones also perform non-incremental run.
+    if previous_run_state.codesign_arguments != incremental_context.codesign_arguments:
+        logging.getLogger(__name__).info(
+            "Decided not to assemble incrementally — previous vs current builds have mismatching codesigning arguments."
+        )
+        return False
     # If bundle from previous run was signed in a different configuration vs the current run (e.g. dry code signed while now regular code signing is required) perform non-incremental run.
     if (
         previous_run_state.codesign_configuration
@@ -71,6 +83,7 @@ def should_assemble_incrementally(
                 Path(i.codesign_entitlements) if i.codesign_entitlements else None
             ),
             incremental_context=incremental_context,
+            codesign_flags_override=i.codesign_flags_override,
         )
         for i in spec
         if i.codesign_on_copy
@@ -85,7 +98,7 @@ def should_assemble_incrementally(
     )
     if not codesign_on_copy_paths_are_compatible:
         logging.getLogger(__name__).info(
-            f"Decided not to assemble incrementally — there is at least one artifact `{list(codesigned_on_copy_paths_from_previous_build_which_are_present_in_current_build - current_codesigned_on_copy_items)[0]}` that was code signed on copy in previous build which is present in current run and not code signed on copy (or codesigned but with a different set of entitlements)."
+            f"Decided not to assemble incrementally — there is at least one artifact `{list(codesigned_on_copy_paths_from_previous_build_which_are_present_in_current_build - current_codesigned_on_copy_items)[0]}` that was code signed on copy in previous build which is present in current run and not code signed on copy (or codesigned but with a different set of entitlements and flags)."
         )
     return codesign_on_copy_paths_are_compatible
 
@@ -185,7 +198,10 @@ def _list_directory_deterministically(directory: Path) -> List[Path]:
 
 
 def codesigned_on_copy_item(
-    path: Path, entitlements: Optional[Path], incremental_context: IncrementalContext
+    path: Path,
+    entitlements: Optional[Path],
+    incremental_context: IncrementalContext,
+    codesign_flags_override: Optional[List[str]],
 ) -> CodesignedOnCopy:
     if entitlements is not None:
         digest = incremental_context.metadata.get(entitlements)
@@ -198,4 +214,5 @@ def codesigned_on_copy_item(
     return CodesignedOnCopy(
         path=path,
         entitlements_digest=digest,
+        codesign_flags_override=codesign_flags_override,
     )

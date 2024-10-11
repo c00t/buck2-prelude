@@ -81,6 +81,19 @@ def _args_parser() -> argparse.ArgumentParser:
         help="Path to code signing utility. If not provided standard `codesign` tool will be used.",
     )
     parser.add_argument(
+        "--strict-provisioning-profile-search",
+        action="store_true",
+        required=False,
+        help="Fail code signing if more than one matching profile found.",
+    )
+    parser.add_argument(
+        "--provisioning-profile-filter",
+        metavar="<regex>",
+        type=str,
+        required=False,
+        help="Regex to disambiguate multiple matching profiles, evaluated against provisioning profile filename.",
+    )
+    parser.add_argument(
         "--codesign-args",
         type=str,
         default=[],
@@ -210,6 +223,13 @@ def _args_parser() -> argparse.ArgumentParser:
         help="Required if swift support was requested. Bundle relative destination path to frameworks directory.",
     )
     parser.add_argument(
+        "--extensionkit-extensions-destination",
+        metavar="<ExtensionKitExtensions>",
+        type=Path,
+        required=False,
+        help="Required if swift support was requested. Bundle relative destination path to ExtensionKit Extensions directory.",
+    )
+    parser.add_argument(
         "--plugins-destination",
         metavar="<Plugins>",
         type=Path,
@@ -247,6 +267,12 @@ def _args_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Uses experimental faster provisioning profile parsing.",
     )
+    parser.add_argument(
+        "--versioned-if-macos",
+        action="store_true",
+        help="Create symlinks for versioned macOS bundle",
+    )
+
     return parser
 
 
@@ -314,6 +340,8 @@ def _main() -> None:
                     ),
                     log_file_path=args.log_file,
                     should_use_fast_provisioning_profile_parsing=args.fast_provisioning_profile_parsing,
+                    strict_provisioning_profile_search=args.strict_provisioning_profile_search,
+                    provisioning_profile_filter=args.provisioning_profile_filter,
                 )
             else:
                 profile_selection_context = None
@@ -336,6 +364,8 @@ def _main() -> None:
                 list_codesign_identities=list_codesign_identities,
                 log_file_path=args.log_file,
                 should_use_fast_provisioning_profile_parsing=args.fast_provisioning_profile_parsing,
+                strict_provisioning_profile_search=args.strict_provisioning_profile_search,
+                provisioning_profile_filter=args.provisioning_profile_filter,
             )
             selected_identity_argument = (
                 signing_context.selected_profile_info.identity.fingerprint
@@ -353,6 +383,8 @@ def _main() -> None:
         codesigned=args.codesign,
         codesign_configuration=args.codesign_configuration,
         codesign_identity=selected_identity_argument,
+        codesign_arguments=args.codesign_args,
+        versioned_if_macos=args.versioned_if_macos,
     )
 
     incremental_state = assemble_bundle(
@@ -360,6 +392,7 @@ def _main() -> None:
         bundle_path=args.output,
         incremental_context=incremental_context,
         check_conflicts=args.check_conflicts,
+        versioned_if_macos=args.versioned_if_macos,
     )
 
     swift_support_args = _swift_support_arguments(
@@ -385,18 +418,29 @@ def _main() -> None:
                 "Expected signing context to be created before bundling is done if codesign is requested."
             )
 
-        bundle_path = CodesignedPath(path=args.output, entitlements=args.entitlements)
+        bundle_path = CodesignedPath(
+            path=args.output, entitlements=args.entitlements, flags=args.codesign_args
+        )
         codesign_on_copy_paths = [
             CodesignedPath(
                 path=bundle_path.path / i.dst,
                 entitlements=(
                     Path(i.codesign_entitlements) if i.codesign_entitlements else None
                 ),
+                flags=(
+                    i.codesign_flags_override
+                    if (i.codesign_flags_override is not None)
+                    else args.codesign_args
+                ),
             )
             for i in spec
             if i.codesign_on_copy
         ] + [
-            CodesignedPath(path=bundle_path.path / path, entitlements=None)
+            CodesignedPath(
+                path=bundle_path.path / path,
+                entitlements=None,
+                flags=args.codesign_args,
+            )
             for path in swift_stdlib_paths
         ]
 
@@ -405,7 +449,6 @@ def _main() -> None:
             signing_context=signing_context,
             platform=args.platform,
             codesign_on_copy_paths=codesign_on_copy_paths,
-            codesign_args=args.codesign_args,
             codesign_tool=args.codesign_tool,
             codesign_configuration=args.codesign_configuration,
         )
@@ -422,7 +465,9 @@ def _main() -> None:
             codesigned=args.codesign,
             codesign_configuration=args.codesign_configuration,
             selected_codesign_identity=selected_identity_argument,
+            codesign_arguments=args.codesign_args,
             swift_stdlib_paths=swift_stdlib_paths,
+            versioned_if_macos=args.versioned_if_macos,
             incremental_context=incremental_context,
         )
 
@@ -439,6 +484,8 @@ def _incremental_context(
     codesigned: bool,
     codesign_configuration: CodesignConfiguration,
     codesign_identity: Optional[str],
+    codesign_arguments: List[str],
+    versioned_if_macos: bool,
 ) -> Optional[IncrementalContext]:
     action_metadata = action_metadata_if_present(_METADATA_PATH_KEY)
     if action_metadata is None:
@@ -457,6 +504,8 @@ def _incremental_context(
         codesigned=codesigned,
         codesign_configuration=codesign_configuration,
         codesign_identity=codesign_identity,
+        codesign_arguments=codesign_arguments,
+        versioned_if_macos=versioned_if_macos,
     )
 
 
@@ -498,6 +547,10 @@ def _swift_support_arguments(
         parser.error(
             "Expected `--frameworks-destination` argument to be specified when `--swift-stdlib-command` is present."
         )
+    if not args.extensionkit_extensions_destination:
+        parser.error(
+            "Expected `--extensionkit-extensions-destination` argument to be specified when `--swift-stdlib-command` is present."
+        )
     if not args.plugins_destination:
         parser.error(
             "Expected `--plugins-destination` argument to be specified when `--swift-stdlib-command` is present."
@@ -515,6 +568,7 @@ def _swift_support_arguments(
         binary_destination=args.binary_destination,
         appclips_destination=args.appclips_destination,
         frameworks_destination=args.frameworks_destination,
+        extensionkit_extensions_destination=args.extensionkit_extensions_destination,
         plugins_destination=args.plugins_destination,
         platform=args.platform,
         sdk_root=args.sdk_root,
@@ -528,7 +582,9 @@ def _write_incremental_state(
     codesigned: bool,
     codesign_configuration: CodesignConfiguration,
     selected_codesign_identity: Optional[str],
+    codesign_arguments: List[str],
     swift_stdlib_paths: List[Path],
+    versioned_if_macos: bool,
     incremental_context: IncrementalContext,
 ) -> None:
     state = IncrementalState(
@@ -542,12 +598,15 @@ def _write_incremental_state(
                     Path(i.codesign_entitlements) if i.codesign_entitlements else None
                 ),
                 incremental_context=incremental_context,
+                codesign_flags_override=i.codesign_flags_override,
             )
             for i in spec
             if i.codesign_on_copy
         ],
         codesign_identity=selected_codesign_identity,
+        codesign_arguments=codesign_arguments,
         swift_stdlib_paths=swift_stdlib_paths,
+        versioned_if_macos=versioned_if_macos,
     )
     path.touch()
     try:

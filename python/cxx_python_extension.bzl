@@ -18,7 +18,6 @@ load(
     "@prelude//cxx:cxx_sources.bzl",
     "get_srcs_with_flags",
 )
-load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxPlatformInfo")
 load(
     "@prelude//cxx:cxx_types.bzl",
     "CxxRuleConstructorParams",
@@ -61,7 +60,8 @@ load(
 )
 load("@prelude//linking:types.bzl", "Linkage")
 load("@prelude//os_lookup:defs.bzl", "OsLookup")
-load("@prelude//python:toolchain.bzl", "PythonPlatformInfo", "get_platform_attr")
+load("@prelude//python:toolchain.bzl", "PythonPlatformInfo", "PythonToolchainInfo", "get_platform_attr")
+load("@prelude//unix:providers.bzl", "UnixEnv", "create_unix_env_info")
 load("@prelude//utils:expect.bzl", "expect")
 load("@prelude//utils:utils.bzl", "value_or")
 load(":manifest.bzl", "create_manifest_for_source_map")
@@ -110,6 +110,8 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
         preprocessor_for_tests = False,
     )
 
+    python_toolchain = ctx.attrs._python_toolchain[PythonToolchainInfo]
+
     impl_params = CxxRuleConstructorParams(
         build_empty_so = True,
         rule_type = "cxx_python_extension",
@@ -119,6 +121,15 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
         use_soname = False,
         generate_providers = cxx_providers,
         generate_sub_targets = sub_targets,
+        compiler_flags = ctx.attrs.compiler_flags,
+        lang_compiler_flags = ctx.attrs.lang_compiler_flags,
+        platform_compiler_flags = ctx.attrs.platform_compiler_flags,
+        extra_link_flags = python_toolchain.extension_linker_flags,
+        lang_platform_compiler_flags = ctx.attrs.lang_platform_compiler_flags,
+        preprocessor_flags = ctx.attrs.preprocessor_flags,
+        lang_preprocessor_flags = ctx.attrs.lang_preprocessor_flags,
+        platform_preprocessor_flags = ctx.attrs.platform_preprocessor_flags,
+        lang_platform_preprocessor_flags = ctx.attrs.lang_platform_preprocessor_flags,
     )
 
     cxx_library_info = cxx_library_parameterized(ctx, impl_params)
@@ -214,6 +225,7 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
             deps = [d.shared_library_info for d in link_deps],
         ),
         linkable_root_info = create_linkable_root(
+            label = ctx.label,
             link_infos = wrap_link_infos(
                 link_infos[LibOutputStyle("pic_archive")],
                 pre_flags = ctx.attrs.linker_flags,
@@ -252,20 +264,21 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
 
     # Export library info.
     python_platform = ctx.attrs._python_toolchain[PythonPlatformInfo]
-    cxx_platform = ctx.attrs._cxx_toolchain[CxxPlatformInfo]
+    cxx_toolchain = ctx.attrs._cxx_toolchain
     raw_deps = ctx.attrs.deps
     raw_deps.extend(
-        get_platform_attr(python_platform, cxx_platform, ctx.attrs.platform_deps),
+        get_platform_attr(python_platform, cxx_toolchain, ctx.attrs.platform_deps),
     )
     deps, shared_deps = gather_dep_libraries(raw_deps)
-    providers.append(create_python_library_info(
+    library_info = create_python_library_info(
         ctx.actions,
         ctx.label,
         extensions = qualify_srcs(ctx.label, ctx.attrs.base_module, {name: extension}),
         deps = deps,
         shared_libraries = shared_deps,
         src_types = src_type_manifest,
-    ))
+    )
+    providers.append(library_info)
 
     # Omnibus providers
 
@@ -288,4 +301,16 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
         deps = raw_deps,
     )
     providers.append(linkable_graph)
+
+    providers.append(
+        create_unix_env_info(
+            actions = ctx.actions,
+            env = UnixEnv(
+                label = ctx.label,
+                python_libs = [library_info],
+            ),
+            deps = raw_deps,
+        ),
+    )
+
     return providers

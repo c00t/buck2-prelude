@@ -10,6 +10,8 @@ load("@prelude//android:android_binary_resources_rules.bzl", "get_android_binary
 load("@prelude//android:android_build_config.bzl", "generate_android_build_config", "get_build_config_fields")
 load(
     "@prelude//android:android_providers.bzl",
+    "AndroidBinaryNativeLibsInfo",  # @unused Used as type
+    "AndroidBinaryResourcesInfo",  # @unused Used as type
     "AndroidBuildConfigInfo",  # @unused Used as type
     "BuildConfigField",
     "DexFilesInfo",
@@ -24,17 +26,24 @@ load("@prelude//android:preprocess_java_classes.bzl", "get_preprocessed_java_cla
 load("@prelude//android:proguard.bzl", "get_proguard_output")
 load("@prelude//android:util.bzl", "create_enhancement_context")
 load("@prelude//android:voltron.bzl", "get_target_to_module_mapping")
-load("@prelude//java:java_providers.bzl", "JavaPackagingInfo", "create_java_packaging_dep", "get_all_java_packaging_deps", "get_all_java_packaging_deps_from_packaging_infos")
+load(
+    "@prelude//java:java_providers.bzl",
+    "JavaPackagingDep",  # @unused Used as type
+    "JavaPackagingInfo",
+    "create_java_packaging_dep",
+    "get_all_java_packaging_deps",
+    "get_all_java_packaging_deps_from_packaging_infos",
+)
 load("@prelude//utils:expect.bzl", "expect")
 
 AndroidBinaryInfo = record(
     sub_targets = dict,
-    java_packaging_deps = list["JavaPackagingDep"],
+    java_packaging_deps = list[JavaPackagingDep],
     deps_by_platform = dict,
     primary_platform = str,
     dex_files_info = DexFilesInfo,
-    native_library_info = "AndroidBinaryNativeLibsInfo",
-    resources_info = "AndroidBinaryResourcesInfo",
+    native_library_info = AndroidBinaryNativeLibsInfo,
+    resources_info = AndroidBinaryResourcesInfo,
     materialized_artifacts = list[Artifact],
 )
 
@@ -85,6 +94,7 @@ def get_binary_info(ctx: AnalysisContext, use_proto_format: bool) -> AndroidBina
         generate_strings_and_ids_separately = should_pre_dex,
         aapt2_preferred_density = ctx.attrs.aapt2_preferred_density,
     )
+    sub_targets["manifest"] = [DefaultInfo(default_output = resources_info.manifest)]
     android_toolchain = ctx.attrs._android_toolchain[AndroidToolchainInfo]
     compiled_r_dot_java_deps = [
         create_java_packaging_dep(

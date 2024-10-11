@@ -25,6 +25,9 @@ Traversal = enum(
     "node",
     # Uses pattern and separates all targets by full folder path.
     "subfolders",
+    # Includes targets found in the transitive deps of *any* roots.
+    # Filters for these mappings will be applied to the intersected deps.
+    "intersect_any_roots",
 )
 
 # Optional type of filtering
@@ -85,6 +88,8 @@ GroupAttrs = record(
     # initial duplicate analysis. This is useful for detecting dduplicated symbols problem early
     # for automatoc link groups that we not aware about (e.g. evicting whole root package folder into link group)
     prohibit_file_duplicates = field(bool, False),
+    # Uses optimized compilation outputs if available.
+    prefer_optimized_experimental = field(bool, False),
 )
 
 # Types of group traversal

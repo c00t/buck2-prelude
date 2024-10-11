@@ -6,7 +6,6 @@
 # of this source tree.
 
 ARGSFILES_SUBTARGET = "argsfiles"
-ABS_ARGSFILES_SUBTARGET = "abs-argsfiles"
 
 # Information on argsfiles created for compilation.
 CompileArgsfile = record(
@@ -15,7 +14,7 @@ CompileArgsfile = record(
     # This argsfile as a command form that would use the argsfile (includes dependent inputs).
     cmd_form = field(cmd_args),
     # Input args necessary for the argsfile to reference.
-    input_args = field(list[["artifacts", cmd_args]]),
+    input_args = field(list[cmd_args]),
     # Args as written to the argsfile (with shell quoting applied).
     args = field(cmd_args),
     # Args aggregated for the argsfile excluding file prefix args (excludes shell quoting).
@@ -25,8 +24,8 @@ CompileArgsfile = record(
 CompileArgsfiles = record(
     # Relative path argsfiles used for build actions, mapped by extension.
     relative = field(dict[str, CompileArgsfile], default = {}),
-    # Absolute path argsfiles used for extra outputs, mapped by extension.
-    absolute = field(dict[str, CompileArgsfile], default = {}),
+    # Argsfiles used for Xcode integration, mapped by extension.
+    xcode = field(dict[str, CompileArgsfile], default = {}),
 )
 
 def get_argsfiles_output(ctx: AnalysisContext, argsfile_by_ext: dict[str, CompileArgsfile], summary_name: str) -> DefaultInfo:

@@ -8,7 +8,7 @@
 load("@prelude//decls/toolchains_common.bzl", "toolchains_common")
 load(":zip_file_toolchain.bzl", "ZipFileToolchainInfo")
 
-def zip_file_impl(ctx: AnalysisContext) -> list[Provider]:
+def _zip_file_impl(ctx: AnalysisContext) -> list[Provider]:
     """
      zip_file() rule implementation
 
@@ -29,13 +29,13 @@ def zip_file_impl(ctx: AnalysisContext) -> list[Provider]:
     zip_srcs = ctx.attrs.zip_srcs
     srcs = ctx.attrs.srcs
 
-    create_zip_cmd = cmd_args([
+    create_zip_cmd = [
         create_zip_tool,
         "--output_path",
         output.as_output(),
         "--on_duplicate_entry",
         on_duplicate_entry if on_duplicate_entry else "overwrite",
-    ])
+    ]
 
     if srcs:
         # add artifact and is_source flag pair
@@ -47,24 +47,24 @@ def zip_file_impl(ctx: AnalysisContext) -> list[Provider]:
         )
         entries_file = ctx.actions.write("entries", srcs_file_cmd)
 
-        create_zip_cmd.add("--entries_file")
-        create_zip_cmd.add(entries_file)
-        create_zip_cmd.hidden(srcs)
+        create_zip_cmd.append("--entries_file")
+        create_zip_cmd.append(entries_file)
+        create_zip_cmd.append(cmd_args(hidden = srcs))
 
     if zip_srcs:
-        create_zip_cmd.add("--zip_sources")
-        create_zip_cmd.add(zip_srcs)
+        create_zip_cmd.append("--zip_sources")
+        create_zip_cmd.append(zip_srcs)
 
     if entries_to_exclude:
-        create_zip_cmd.add("--entries_to_exclude")
-        create_zip_cmd.add(entries_to_exclude)
+        create_zip_cmd.append("--entries_to_exclude")
+        create_zip_cmd.append(entries_to_exclude)
 
-    ctx.actions.run(create_zip_cmd, category = "zip")
+    ctx.actions.run(cmd_args(create_zip_cmd), category = "zip")
 
     return [DefaultInfo(default_output = output)]
 
 implemented_rules = {
-    "zip_file": zip_file_impl,
+    "zip_file": _zip_file_impl,
 }
 
 extra_attributes = {
