@@ -84,3 +84,9 @@ cxx_hacks(
     name = "cxx_hacks",
     visibility = ["PUBLIC"],
 )
+
+prelude.python_bootstrap_binary(
+    name = "run_vcpkg",
+    main = "run_vcpkg.py",
+    visibility = ["PUBLIC"],
+)
